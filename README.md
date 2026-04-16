@@ -33,8 +33,6 @@ cp -r ldap_sync_groups plugins/
 ### 2. Run database migrations
 
 ```bash
-# Set secret key (if not already set)
-export SECRET_KEY_BASE=$(rake secret)
 # Run migrations
 rake redmine:plugins:migrate RAILS_ENV=production
 ```
@@ -63,21 +61,21 @@ touch tmp/restart.txt
 
 ```bash
 # Dry run (test only)
-rails runner "require File.expand_path('plugins/ldap_sync_groups/lib/ldap_sync_service', Dir.pwd); LdapSyncService.new(true).run" RAILS_ENV=production
+rails runner "require File.expand_path('plugins/ldap_sync_groups/lib/ldap_sync_service', Dir.pwd); LdapSyncService.new(true).run"
 
 # Live sync
-rails runner "require File.expand_path('plugins/ldap_sync_groups/lib/ldap_sync_service', Dir.pwd); LdapSyncService.new(false).run" RAILS_ENV=production
+rails runner "require File.expand_path('plugins/ldap_sync_groups/lib/ldap_sync_service', Dir.pwd); LdapSyncService.new(false).run"
 ```
 
 ### Automating with Cron
 To run sync automatically, add to crontab:
 ```bash
-# Daily sync at 2 AM
-0 */1 * * * cd /usr/src/redmine && rails runner "LdapSyncService.new(false).run" RAILS_ENV=production
+# Daily sync every hour
+0 */1 * * * cd /usr/src/redmine && bundle exec rails runner "LdapSyncService.new(false).run"
 ```
 ```bash
 # Weekly dry-run on Monday at 9 AM
-0 9 * * 1 cd /path/to/redmine && rails runner "LdapSyncService.new(true).run" RAILS_ENV=production
+0 9 * * 1 cd /usr/src/redmine && bundle exec rails runner "LdapSyncService.new(false).run"
 ```
 
 ### LDAP Authentication Mode
