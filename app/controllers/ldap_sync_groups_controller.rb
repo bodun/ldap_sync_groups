@@ -17,6 +17,16 @@ class LdapSyncGroupsController < ApplicationController
           LdapSetting.set(key, '')
         end
       end
+      
+      # Tratează checkbox-urile care nu vin în params când sunt debifate
+      unless params[:settings].key?('verbose_logging')
+        LdapSetting.set('verbose_logging', 'false')
+      end
+      
+      unless params[:settings].key?('send_report_only_on_changes')
+        LdapSetting.set('send_report_only_on_changes', 'false')
+      end
+      
       flash[:notice] = "Settings saved successfully"
     end
     redirect_to action: :index
@@ -30,7 +40,7 @@ class LdapSyncGroupsController < ApplicationController
       service = LdapSyncService.new(dry_run)
       result = service.run
       
-      flash[:notice] = "Sync completed: #{result[:users]} users, #{result[:groups]} groups, #{result[:added]} added, #{result[:removed]} removed"
+      flash[:notice] = "Sync completed: #{result[:users_in_redmine]} users in Redmine, #{result[:groups_processed]} groups, #{result[:users_added]} added, #{result[:users_removed]} removed"
       flash[:warning] = "DRY RUN - No changes made" if dry_run
     rescue => e
       flash[:error] = "Sync failed: #{e.message}"

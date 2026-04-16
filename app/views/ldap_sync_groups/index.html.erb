@@ -1,5 +1,5 @@
 <h2>LDAP Sync Groups Plugin</h2>
-<p>Author: Steel..xD | Version 2.1</p>
+<p>Author: Steel..xD | Version 2.2</p>
 
 <%= form_tag({action: 'save'}, method: :post) do %>
   <fieldset>
@@ -30,6 +30,7 @@
     </p>
     <p>
       <label>
+        <%= hidden_field_tag 'settings[verbose_logging]', 'false' %>
         <%= check_box_tag 'settings[verbose_logging]', 'true', LdapSetting.get('verbose_logging') == 'true' %>
         Verbose Logging
       </label>
@@ -37,7 +38,26 @@
     </p>
   </fieldset>
   
-  <p><%= submit_tag '💾 Save Settings', class: 'button-positive' %></p>
+  <fieldset>
+    <legend>Email Report</legend>
+    <p>
+      <label>Report Email:</label>
+      <%= email_field_tag 'settings[report_email]', LdapSetting.get('report_email'), size: 40, placeholder: 'admin@example.com' %>
+      <br/><em>Email address to receive sync reports</em>
+    </p>
+    <p>
+      <label>
+        <%= hidden_field_tag 'settings[send_report_only_on_changes]', 'false' %>
+        <%= check_box_tag 'settings[send_report_only_on_changes]', 'true', LdapSetting.get('send_report_only_on_changes') == 'true' %>
+        Send report only when changes are detected
+      </label>
+      <br/><em>If unchecked, reports will be sent after every sync</em>
+    </p>
+  </fieldset>
+  
+  <div style="margin-top: 20px;">
+    <%= submit_tag '💾 Save Settings', class: 'button-positive', style: 'background: #2a6; color: white; padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;' %>
+  </div>
 <% end %>
 
 <hr />
@@ -46,36 +66,20 @@
 <div id="configModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
   <div style="background: white; width: 600px; margin: 100px auto; padding: 20px; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.3);">
     <h3>📋 Current LDAP Configuration</h3>
-    <button onclick="closeModal()" style="float: right; background: #c00; color: white; border: none; padding: 5px 10px; cursor: pointer;">✖ Close</button>
+    <button onclick="closeModal()" style="float: right; background: #c00; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 3px;">✖ Close</button>
     <div style="clear: both;"></div>
     
     <% if @selected_auth_id > 0 && @auth = AuthSourceLdap.find_by(id: @selected_auth_id) %>
-      <table style="width: 100%; margin-top: 20px;">
-        <tr>
-          <td style="width: 150px; font-weight: bold;">Name:</td>
-          <td><%= @auth.name %></td>
-        </tr>
-        <tr>
-          <td style="font-weight: bold;">Host:</td>
-          <td><%= @auth.host %>:<%= @auth.port %></td>
-        </tr>
-        <tr>
-          <td style="font-weight: bold;">Base DN:</td>
-          <td><%= @auth.base_dn %></td>
-        </tr>
-        <tr>
-          <td style="font-weight: bold;">Groups DN:</td>
-          <td><%= LdapSetting.get('ldap_groups_dn') || 'Not configured' %></td>
-        </tr>
-        <tr>
-          <td style="font-weight: bold;">Group Prefix:</td>
-          <td><%= LdapSetting.get('ldap_group_prefix').presence || 'NONE (all groups)' %></td>
-        </tr>
-        <tr>
-          <td style="font-weight: bold;">Verbose Logging:</td>
-          <td><%= LdapSetting.get('verbose_logging') == 'true' ? '✅ Enabled' : '❌ Disabled' %></td>
-        </tr>
-       </table>
+      <table style="width: 100%; margin-top: 20px; border-collapse: collapse;">
+        <tr><td style="width: 200px; padding: 8px; border-bottom: 1px solid #ddd;"><strong>Name:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd;"><%= @auth.name %></td></tr>
+        <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Host:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd;"><%= @auth.host %>:<%= @auth.port %></td></tr>
+        <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Base DN:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd;"><%= @auth.base_dn %></td></tr>
+        <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Groups DN:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd;"><%= LdapSetting.get('ldap_groups_dn') || 'Not configured' %></td></tr>
+        <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Group Prefix:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd;"><%= LdapSetting.get('ldap_group_prefix').presence || 'NONE (all groups)' %></td></tr>
+        <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Verbose Logging:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd;"><%= LdapSetting.get('verbose_logging') == 'true' ? '✅ Enabled' : '❌ Disabled' %></td></tr>
+        <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Report Email:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd;"><%= LdapSetting.get('report_email').presence || 'Not configured' %></td></tr>
+        <tr><td style="padding: 8px;"><strong>Send on changes only:</strong></td><td style="padding: 8px;"><%= LdapSetting.get('send_report_only_on_changes') == 'true' ? '✅ Yes' : '❌ No' %></td></tr>
+      </table>
     <% else %>
       <p style="margin-top: 20px;"><em>No LDAP authentication mode selected.</em></p>
     <% end %>
@@ -86,18 +90,18 @@
 
 <h3>Synchronization</h3>
 <p>
-  <%= form_tag({action: 'sync'}, method: :post, style: 'display: inline-block') do %>
+  <%= form_tag({action: 'sync'}, method: :post, style: 'display: inline-block; margin-right: 10px;') do %>
     <%= hidden_field_tag :dry_run, '0' %>
-    <%= submit_tag '▶ Run Live Sync', style: 'background: #169; color: white; padding: 8px 16px' %>
+    <%= submit_tag '▶ Run Live Sync', style: 'background: #169; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;' %>
   <% end %>
   
-  <%= form_tag({action: 'sync'}, method: :post, style: 'display: inline-block') do %>
+  <%= form_tag({action: 'sync'}, method: :post, style: 'display: inline-block; margin-right: 10px;') do %>
     <%= hidden_field_tag :dry_run, '1' %>
-    <%= submit_tag '🔍 Run Dry Run (Test)', style: 'background: #e6b800; color: white; padding: 8px 16px' %>
+    <%= submit_tag '🔍 Run Dry Run (Test)', style: 'background: #e6b800; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;' %>
   <% end %>
   
-  <%= form_tag({action: 'clear_logs'}, method: :post, style: 'display: inline-block') do %>
-    <%= submit_tag '🗑 Clear Logs', style: 'background: #c00; color: white; padding: 8px 16px' %>
+  <%= form_tag({action: 'clear_logs'}, method: :post, style: 'display: inline-block;') do %>
+    <%= submit_tag '🗑 Clear Logs', style: 'background: #c00; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;' %>
   <% end %>
 </p>
 
@@ -155,13 +159,16 @@ window.onclick = function(event) {
 
 <style>
   .button-positive {
-    background-color: #116699 !important;
-    background: #2a6;
-    color: white;
-    padding: 8px 16px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
+    background: #2a6 !important;
+    color: white !important;
+    padding: 8px 20px !important;
+    border: none !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+    font-size: 14px !important;
+  }
+  .button-positive:hover {
+    opacity: 0.9 !important;
   }
   em {
     font-size: 0.9em;
@@ -179,7 +186,7 @@ window.onclick = function(event) {
   }
   label {
     display: inline-block;
-    width: 150px;
+    width: 220px;
     font-weight: bold;
   }
   p {
@@ -195,5 +202,15 @@ window.onclick = function(event) {
   }
   button:hover {
     opacity: 0.9;
+  }
+  input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    vertical-align: middle;
+    margin-right: 8px;
+    cursor: pointer;
+  }
+  input[type="hidden"] + input[type="checkbox"] {
+    margin-left: 0;
   }
 </style>

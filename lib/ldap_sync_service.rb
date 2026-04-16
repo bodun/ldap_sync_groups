@@ -19,19 +19,24 @@ class LdapSyncService
     @groups_dn = LdapSetting.get('ldap_groups_dn')
     @group_prefix = LdapSetting.get('ldap_group_prefix') || ''
     @verbose = LdapSetting.get('verbose_logging') == 'true'
+    @report_email = LdapSetting.get('report_email')
+    @send_report_only_on_changes = LdapSetting.get('send_report_only_on_changes') == 'true'
     
     @stats = { 
-      users: 0, 
-      locked: 0, 
-      unlocked: 0, 
-      groups: 0, 
-      added: 0, 
-      removed: 0
+      users_in_redmine: 0,
+      users_locked: 0, 
+      users_unlocked: 0, 
+      groups_processed: 0, 
+      users_added: 0, 
+      users_removed: 0
     }
     
     @created_groups = []
     @unchanged_groups = []
-    @user_changes = []
+    @changes = []
+    @user_locks = []
+    @user_unlocks = []
+    @all_groups = []
   end
   
   def log(msg, level = 'info')
@@ -41,7 +46,6 @@ class LdapSyncService
       if @verbose
         SyncLog.create(message: msg, level: level)
       else
-        # Salvăm doar mesajele importante
         important_patterns = ['===', '---', 'Group filter', '✅ Groups processed', 
                               '✅ Users synced', '📊', '✓ No changes', 'ADD user', 
                               'REMOVE user', 'LOCK user', 'UNLOCK user', 'Create group']
@@ -56,6 +60,7 @@ class LdapSyncService
   def log_error(msg)
     puts "[#{Time.now}] ERROR: #{msg}"
     SyncLog.create(message: "ERROR: #{msg}", level: 'error') unless @dry_run
+    @changes << "ERROR: #{msg}"
   end
   
   def run
@@ -70,10 +75,9 @@ class LdapSyncService
     
     unless ldap.bind
       log_error("Cannot bind to LDAP server #{@host}:#{@port}")
+      send_report if @report_email.present?
       return @stats
     end
-    
-    # Nu mai logăm "Connected to LDAP server" și "LDAP Server"
     
     log("--- Syncing users ---")
     sync_users(ldap)
@@ -86,60 +90,68 @@ class LdapSyncService
     end
     sync_groups(ldap)
     
-    log("✅ Groups processed: #{@stats[:groups]}")
-    log("📊 Users: #{@stats[:users]} processed, #{@stats[:locked]} locked, #{@stats[:unlocked]} unlocked")
-    log("📊 Groups: #{@stats[:groups]} processed, #{@stats[:added]} added, #{@stats[:removed]} removed")
+    # Afișare grupuri procesate
+    if @all_groups.any?
+      log("✅ Groups processed: #{@all_groups.size} groups (#{@all_groups.join(', ')})")
+    else
+      log("✅ Groups processed: #{@stats[:groups_processed]}")
+    end
+    
+    log("📊 Users in Redmine: #{@stats[:users_in_redmine]}, Locked: #{@stats[:users_locked]}, Unlocked: #{@stats[:users_unlocked]}")
+    log("📊 Groups: #{@stats[:groups_processed]} processed, #{@stats[:users_added]} added, #{@stats[:users_removed]} removed")
     log("=== Sync Complete ===")
+    
+    # Trimite raport
+    send_report if @report_email.present?
     
     @stats
   end
   
   def sync_users(ldap)
     filter = Net::LDAP::Filter.eq("objectClass", "user")
-    processed = 0
-    locked_users = []
-    unlocked_users = []
+    redmine_users_count = 0
     
     ldap.search(base: @users_dn, filter: filter, attributes: ['sAMAccountName', 'userAccountControl']) do |entry|
       username = entry[:samaccountname]&.first
       next unless username
       
-      @stats[:users] += 1
-      processed += 1
-      
       user = User.find_by(login: username.downcase)
-      next unless user
+      if user
+        redmine_users_count += 1
+        @stats[:users_in_redmine] += 1
+      else
+        next
+      end
       
       uac = entry[:useraccountcontrol]&.first.to_i
       disabled = (uac & 2) == 2
       
       if disabled && user.active?
         log("🔒 LOCK user: #{username}")
+        @user_locks << username
+        @changes << "🔒 Locked user: #{username}"
         unless @dry_run
           user.lock!
-          # Force save
           user.save!
         end
-        @stats[:locked] += 1
-        locked_users << username
+        @stats[:users_locked] += 1
       elsif !disabled && user.locked?
         log("🔓 UNLOCK user: #{username}")
+        @user_unlocks << username
+        @changes << "🔓 Unlocked user: #{username}"
         unless @dry_run
           user.activate!
-          # Force save
           user.save!
         end
-        @stats[:unlocked] += 1
-        unlocked_users << username
+        @stats[:users_unlocked] += 1
       end
     end
     
-    log("✅ Users synced: #{processed} total, #{locked_users.size} locked, #{unlocked_users.size} unlocked")
+    log("✅ Users synced: #{redmine_users_count} in Redmine, #{@user_locks.size} locked, #{@user_unlocks.size} unlocked")
   end
   
   def sync_groups(ldap)
     filter = Net::LDAP::Filter.eq("objectClass", "group")
-    group_changes = []
     
     ldap.search(base: @groups_dn, filter: filter, attributes: ['cn', 'member']) do |entry|
       cn = entry[:cn]&.first
@@ -150,7 +162,8 @@ class LdapSyncService
       end
       
       group_name = cn
-      @stats[:groups] += 1
+      @stats[:groups_processed] += 1
+      @all_groups << group_name
       
       # Find or create Redmine group
       group = Group.find_by(lastname: group_name)
@@ -160,6 +173,7 @@ class LdapSyncService
         group = Group.create(lastname: group_name)
         group_created = true
         @created_groups << group_name
+        @changes << "📁 Created group: #{group_name}"
       end
       
       if group.nil?
@@ -191,9 +205,9 @@ class LdapSyncService
         
         if user && !group.users.include?(user)
           group.users << user unless @dry_run
-          @stats[:added] += 1
+          @stats[:users_added] += 1
           added_users << username
-          group_changes << "ADD user: #{username} to #{group_name}"
+          @changes << "➕ Added user #{username} to group #{group_name}"
         end
       end
       
@@ -201,9 +215,9 @@ class LdapSyncService
       group.users.each do |user|
         unless ldap_members.include?(user.login.downcase)
           group.users.delete(user) unless @dry_run
-          @stats[:removed] += 1
+          @stats[:users_removed] += 1
           removed_users << user.login
-          group_changes << "REMOVE user: #{user.login} from #{group_name}"
+          @changes << "➖ Removed user #{user.login} from group #{group_name}"
         end
       end
       
@@ -226,6 +240,64 @@ class LdapSyncService
     # Log created groups
     if @created_groups.any?
       log("📁 Create groups: #{@created_groups.join(', ')}")
+    end
+  end
+  
+  def send_report
+    return if @report_email.blank?
+    
+    # Dacă e configurat să trimită doar la modificări și nu există modificări, nu trimite
+    if @send_report_only_on_changes && @changes.empty?
+      puts "No changes detected. Report not sent."
+      return
+    end
+    
+    subject = "Redmine LDAP Sync Groups - #{Time.now.strftime('%Y-%m-%d %H:%M')}"
+    
+    if @changes.empty?
+      body = "No changes detected during LDAP synchronization.\n\n"
+      body += "=== Statistics ===\n"
+      body += "Users in Redmine: #{@stats[:users_in_redmine]}\n"
+      body += "Groups processed: #{@stats[:groups_processed]} groups\n"
+      if @all_groups.any?
+        body += "Groups list: #{@all_groups.join(', ')}\n"
+      end
+      body += "Dry run: #{@dry_run ? 'Yes (no changes applied)' : 'No'}\n"
+    else
+      body = "=== LDAP Sync Changes Report ===\n\n"
+      body += "Synchronization completed at: #{Time.now}\n"
+      body += "Dry run: #{@dry_run ? 'Yes (no changes applied)' : 'No'}\n\n"
+      
+      body += "=== Statistics ===\n"
+      body += "Users in Redmine: #{@stats[:users_in_redmine]}\n"
+      body += "Users locked: #{@stats[:users_locked]}\n"
+      body += "Users unlocked: #{@stats[:users_unlocked]}\n"
+      body += "Groups processed: #{@stats[:groups_processed]} groups\n"
+      if @all_groups.any?
+        body += "Groups list: #{@all_groups.join(', ')}\n"
+      end
+      body += "Users added to groups: #{@stats[:users_added]}\n"
+      body += "Users removed from groups: #{@stats[:users_removed]}\n\n"
+      
+      body += "=== Changes ===\n"
+      @changes.each do |change|
+        body += "• #{change}\n"
+      end
+    end
+    
+    body += "\n---\n"
+    body += "LDAP Sync Plugin v2.2 | Steel..xD"
+    
+    begin
+      ActionMailer::Base.mail(
+        from: Setting.mail_from,
+        to: @report_email,
+        subject: subject,
+        body: body
+      ).deliver
+      puts "✅ Report sent to #{@report_email}"
+    rescue => e
+      puts "❌ Failed to send report: #{e.message}"
     end
   end
 end
