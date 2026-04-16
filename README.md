@@ -73,7 +73,7 @@ rails runner "require File.expand_path('plugins/ldap_sync_groups/lib/ldap_sync_s
 To run sync automatically, add to crontab:
 ```bash
 # Daily sync at 2 AM
-0 2 * * * cd /usr/src/redmine && rails runner "LdapSyncService.new(false).run" RAILS_ENV=production
+0 */1 * * * cd /usr/src/redmine && rails runner "LdapSyncService.new(false).run" RAILS_ENV=production
 ```
 ```bash
 # Weekly dry-run on Monday at 9 AM
