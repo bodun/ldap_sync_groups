@@ -1,0 +1,199 @@
+<h2>LDAP Sync Groups Plugin</h2>
+<p>Author: Steel..xD | Version 2.1</p>
+
+<%= form_tag({action: 'save'}, method: :post) do %>
+  <fieldset>
+    <legend>LDAP Authentication (from Redmine)</legend>
+    <p>
+      <label>LDAP Auth Mode:</label>
+      <%= select_tag 'settings[ldap_auth_id]', 
+                     options_for_select(@ldap_auths.map { |a| [a.name, a.id] }, @selected_auth_id),
+                     include_blank: 'Select LDAP Authentication Mode' %>
+      <br/><em>Select the LDAP authentication mode configured in Administration → Authentication modes</em>
+    </p>
+    <p>
+      <button type="button" onclick="showConfig()" style="margin-left: 160px;">📋 Current LDAP Configuration</button>
+    </p>
+  </fieldset>
+  
+  <fieldset>
+    <legend>LDAP Sync Settings</legend>
+    <p>
+      <label>Groups DN:</label>
+      <%= text_field_tag 'settings[ldap_groups_dn]', LdapSetting.get('ldap_groups_dn'), size: 60 %>
+      <br/><em>Example: OU=Groups,DC=domain,DC=com</em>
+    </p>
+    <p>
+      <label>Group Prefix (optional):</label>
+      <%= text_field_tag 'settings[ldap_group_prefix]', LdapSetting.get('ldap_group_prefix'), size: 20, placeholder: 'Leave empty for ALL groups' %>
+      <br/><em>Leave empty to import ALL groups from the Groups DN</em>
+    </p>
+    <p>
+      <label>
+        <%= check_box_tag 'settings[verbose_logging]', 'true', LdapSetting.get('verbose_logging') == 'true' %>
+        Verbose Logging
+      </label>
+      <br/><em>Show detailed member information (useful for debugging)</em>
+    </p>
+  </fieldset>
+  
+  <p><%= submit_tag '💾 Save Settings', class: 'button-positive' %></p>
+<% end %>
+
+<hr />
+
+<!-- Modal pentru Current LDAP Configuration -->
+<div id="configModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+  <div style="background: white; width: 600px; margin: 100px auto; padding: 20px; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.3);">
+    <h3>📋 Current LDAP Configuration</h3>
+    <button onclick="closeModal()" style="float: right; background: #c00; color: white; border: none; padding: 5px 10px; cursor: pointer;">✖ Close</button>
+    <div style="clear: both;"></div>
+    
+    <% if @selected_auth_id > 0 && @auth = AuthSourceLdap.find_by(id: @selected_auth_id) %>
+      <table style="width: 100%; margin-top: 20px;">
+        <tr>
+          <td style="width: 150px; font-weight: bold;">Name:</td>
+          <td><%= @auth.name %></td>
+        </tr>
+        <tr>
+          <td style="font-weight: bold;">Host:</td>
+          <td><%= @auth.host %>:<%= @auth.port %></td>
+        </tr>
+        <tr>
+          <td style="font-weight: bold;">Base DN:</td>
+          <td><%= @auth.base_dn %></td>
+        </tr>
+        <tr>
+          <td style="font-weight: bold;">Groups DN:</td>
+          <td><%= LdapSetting.get('ldap_groups_dn') || 'Not configured' %></td>
+        </tr>
+        <tr>
+          <td style="font-weight: bold;">Group Prefix:</td>
+          <td><%= LdapSetting.get('ldap_group_prefix').presence || 'NONE (all groups)' %></td>
+        </tr>
+        <tr>
+          <td style="font-weight: bold;">Verbose Logging:</td>
+          <td><%= LdapSetting.get('verbose_logging') == 'true' ? '✅ Enabled' : '❌ Disabled' %></td>
+        </tr>
+       </table>
+    <% else %>
+      <p style="margin-top: 20px;"><em>No LDAP authentication mode selected.</em></p>
+    <% end %>
+  </div>
+</div>
+
+<hr />
+
+<h3>Synchronization</h3>
+<p>
+  <%= form_tag({action: 'sync'}, method: :post, style: 'display: inline-block') do %>
+    <%= hidden_field_tag :dry_run, '0' %>
+    <%= submit_tag '▶ Run Live Sync', style: 'background: #169; color: white; padding: 8px 16px' %>
+  <% end %>
+  
+  <%= form_tag({action: 'sync'}, method: :post, style: 'display: inline-block') do %>
+    <%= hidden_field_tag :dry_run, '1' %>
+    <%= submit_tag '🔍 Run Dry Run (Test)', style: 'background: #e6b800; color: white; padding: 8px 16px' %>
+  <% end %>
+  
+  <%= form_tag({action: 'clear_logs'}, method: :post, style: 'display: inline-block') do %>
+    <%= submit_tag '🗑 Clear Logs', style: 'background: #c00; color: white; padding: 8px 16px' %>
+  <% end %>
+</p>
+
+<hr />
+
+<h3>Recent Logs</h3>
+<% if @logs.any? %>
+  <div style="max-height: 400px; overflow-y: auto; background: #f9f9f9; border: 1px solid #ddd; padding: 10px; font-family: monospace; font-size: 12px;">
+    <table style="width: 100%;">
+      <thead>
+        <tr style="background: #ddd;">
+          <th style="width: 160px; text-align: left; padding: 5px;">Time</th>
+          <th style="text-align: left; padding: 5px;">Message</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @logs.each do |log| %>
+          <tr style="<%= 'color: #c00;' if log.message.include?('ERROR') %><%= 'color: #2a6;' if log.message.include?('Create') || log.message.include?('ADD') %><%= 'color: #e6b800;' if log.message.include?('LOCK') || log.message.include?('UNLOCK') %>">
+            <td style="white-space: nowrap; padding: 3px 5px;"><%= log.created_at.strftime('%Y-%m-%d %H:%M:%S') %></td>
+            <td style="padding: 3px 5px;"><%= log.message %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+<% else %>
+  <p><em>No logs available. Run a sync to see results.</em></p>
+<% end %>
+
+<script>
+function showConfig() {
+  document.getElementById('configModal').style.display = 'block';
+}
+
+function closeModal() {
+  document.getElementById('configModal').style.display = 'none';
+}
+
+document.querySelectorAll('input[value="▶ Run Live Sync"]').forEach(btn => {
+  btn.closest('form').addEventListener('submit', e => {
+    if(!confirm('WARNING: This will make LIVE changes to your Redmine database!\n- Users will be locked/unlocked\n- Groups will be created/modified\n- Group memberships will be updated\n\nContinue?')) {
+      e.preventDefault();
+    }
+  });
+});
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+  var modal = document.getElementById('configModal');
+  if (event.target == modal) {
+    modal.style.display = 'none';
+  }
+}
+</script>
+
+<style>
+  .button-positive {
+    background-color: #116699 !important;
+    background: #2a6;
+    color: white;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  em {
+    font-size: 0.9em;
+    color: #666;
+  }
+  fieldset {
+    margin-bottom: 20px;
+    padding: 15px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+  }
+  legend {
+    font-weight: bold;
+    padding: 0 10px;
+  }
+  label {
+    display: inline-block;
+    width: 150px;
+    font-weight: bold;
+  }
+  p {
+    margin: 10px 0;
+  }
+  button {
+    background: #169;
+    color: white;
+    border: none;
+    padding: 5px 15px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  button:hover {
+    opacity: 0.9;
+  }
+</style>
