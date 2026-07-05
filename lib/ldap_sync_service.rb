@@ -41,25 +41,23 @@ class LdapSyncService
   
   def log(msg, level = 'info')
     puts "[#{Time.now}] #{msg}"
-    
-    unless @dry_run
-      if @verbose
+
+    if @dry_run || @verbose
+      SyncLog.create(message: msg, level: level)
+    else
+      important_patterns = ['===', '---', 'Group filter', '✅ Groups processed',
+                            '✅ Users synced', '📊', '✓ No changes', 'ADD user',
+                            'REMOVE user', 'LOCK user', 'UNLOCK user', 'Create group']
+
+      if important_patterns.any? { |pattern| msg.include?(pattern) }
         SyncLog.create(message: msg, level: level)
-      else
-        important_patterns = ['===', '---', 'Group filter', '✅ Groups processed', 
-                              '✅ Users synced', '📊', '✓ No changes', 'ADD user', 
-                              'REMOVE user', 'LOCK user', 'UNLOCK user', 'Create group']
-        
-        if important_patterns.any? { |pattern| msg.include?(pattern) }
-          SyncLog.create(message: msg, level: level)
-        end
       end
     end
   end
-  
+
   def log_error(msg)
     puts "[#{Time.now}] ERROR: #{msg}"
-    SyncLog.create(message: "ERROR: #{msg}", level: 'error') unless @dry_run
+    SyncLog.create(message: "ERROR: #{msg}", level: 'error')
     @changes << "ERROR: #{msg}"
   end
   
@@ -161,7 +159,7 @@ class LdapSyncService
         next
       end
       
-      group_name = cn
+      group_name = @group_prefix.present? ? cn.delete_prefix(@group_prefix) : cn
       @stats[:groups_processed] += 1
       @all_groups << group_name
       
